@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>__PROJECT_NAME__</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; }
+    #result { margin-top: 20px; padding: 16px; background: #f0f0f0; border-radius: 8px; }
+    .error { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>__PROJECT_NAME__</h1>
+  <p>Dynamically registered via caddy-admin service API.</p>
+  <button onclick="fetchHello()">Call /api/hello</button>
+  <div id="result">Click the button to call the API.</div>
+
+  <script>
+    async function fetchHello() {
+      const el = document.getElementById('result');
+      try {
+        const res = await fetch('/api/hello');
+        const data = await res.json();
+        el.textContent = JSON.stringify(data, null, 2);
+        el.className = '';
+      } catch (err) {
+        el.textContent = 'Error: ' + err.message;
+        el.className = 'error';
+      }
+    }
+  </script>
+</body>
+</html>

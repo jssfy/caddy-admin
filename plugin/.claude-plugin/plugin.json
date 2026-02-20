@@ -1,0 +1,18 @@
+{
+  "name": "caddy-admin",
+  "version": "1.0.0",
+  "description": "Scaffold dynamic services for caddy-admin. Generates project boilerplate for auto-registration with Caddy reverse proxy.",
+  "author": {
+    "name": "jssfy",
+    "url": "https://github.com/jssfy"
+  },
+  "repository": "https://github.com/jssfy/caddy-admin",
+  "license": "MIT",
+  "keywords": [
+    "caddy",
+    "reverse-proxy",
+    "docker",
+    "scaffold",
+    "service-registration"
+  ]
+}

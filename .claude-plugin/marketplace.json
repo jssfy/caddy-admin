@@ -1,0 +1,17 @@
+{
+  "name": "jssfy-caddy-admin",
+  "owner": {
+    "name": "jssfy",
+    "url": "https://github.com/jssfy"
+  },
+  "plugins": [
+    {
+      "name": "caddy-admin",
+      "source": "./plugin",
+      "description": "Scaffold and manage dynamic services for caddy-admin reverse proxy platform",
+      "version": "1.0.0",
+      "repository": "https://github.com/jssfy/caddy-admin",
+      "license": "MIT"
+    }
+  ]
+}

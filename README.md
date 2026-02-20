@@ -622,6 +622,22 @@ caddy-admin/                        # 基础设施
 ├── docker-compose.yml
 └── Makefile
 
+.claude-plugin/                     # Claude Code Plugin Marketplace 声明
+└── marketplace.json
+
+plugin/                             # Claude Code Plugin（可分发）
+├── .claude-plugin/
+│   └── plugin.json                 # plugin 元信息
+├── skills/
+│   └── scaffold-service/           # /caddy-admin:scaffold-service
+│       ├── SKILL.md                # skill 定义 + 执行指令
+│       └── templates/              # 项目模板（go/node/frontend）
+└── README.md
+
+docs/                               # 文档
+├── dynamic-service-quick-start-*.md  # 新项目接入 Quick Start
+└── scaffold-service-skill-analysis-*.md  # Plugin 设计分析
+
 demos/project-c/                    # 动态注册验证项目（独立 docker-compose）
 ├── backend/
 │   ├── main.go                     # Go HTTP :8080
@@ -640,9 +656,29 @@ demos/project-c/                    # 动态注册验证项目（独立 docker-c
 
 ## 可复用模板
 
-### 新项目接入（动态注册方式，推荐）
+### 方式一：Claude Code Plugin 一键脚手架（推荐）
 
-以 `demos/project-c/` 为模板，新项目只需 4 个文件即可接入：
+安装 plugin 后，一条命令生成完整的可运行项目：
+
+```bash
+# 安装（一次性）
+claude plugin marketplace add jssfy/caddy-admin
+claude plugin install caddy-admin@jssfy-caddy-admin
+
+# 生成项目（在任意目录下）
+/caddy-admin:scaffold-service my-project              # Go 后端（默认）
+/caddy-admin:scaffold-service my-project --lang node   # Node.js 后端
+/caddy-admin:scaffold-service my-project --lang static  # 纯静态站
+
+# 启动即自动注册
+cd my-project && docker compose up -d --build
+```
+
+自动生成：`.env` / `register.sh` / `docker-compose.yml` / `Makefile` / `backend/` / `frontend/`，所有变量从项目名自动派生。详见 [`plugin/README.md`](plugin/README.md)。
+
+### 方式二：手动复制模板
+
+以 `demos/project-c/`（[GitHub](https://github.com/jssfy/project-c)）为模板，新项目只需 4 个文件即可接入：
 
 ```
 my-project/
@@ -657,7 +693,9 @@ my-project/
 cd my-project && docker compose up -d
 ```
 
-### 新项目接入（Caddyfile 静态方式）
+详细步骤参考 [`docs/dynamic-service-quick-start-2026-02-21.md`](docs/dynamic-service-quick-start-2026-02-21.md)。
+
+### 方式三：Caddyfile 静态路由
 
 ```bash
 # 1. 在 Caddyfile 追加站点块
