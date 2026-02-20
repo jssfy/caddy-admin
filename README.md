@@ -1,12 +1,17 @@
 # caddy-admin
 
-一个只读信息面板，查询 Caddy Admin API，展示当前纳管的所有站点、路由配置和 TLS 证书状态。
+Caddy 多项目管理平台：只读仪表盘 + **动态服务注册中心**。
 
-同时作为 **"Go API + React 前端 + Caddy 单进程管理多项目"** 部署方案的可验证 Demo。
+- **仪表盘**：查询 Caddy Admin API，展示当前纳管的所有站点、路由配置和 TLS 证书状态
+- **服务注册**：新项目启动时通过 `POST /api/services` 自注册路由到 Caddy，持久化到 `services.json`，Caddy 重启后自动恢复
+
+同时作为 **"Go API + React 前端 + Caddy 单进程管理多项目"** 部署方案的可验证 Demo。`project-c` 是动态注册的端到端验证项目。
 
 ---
 
 ## 推送到github
+
+- /Users/yeanhua/workspace/playground/claude/github-assistant/README.md
 
 ``` log
 gh repo create caddy-admin \
@@ -17,44 +22,75 @@ gh repo create caddy-admin \
 
 ```
 
-## 容器关系（本地 4 个容器）
+## 容器关系
+
+### 基础设施（caddy-admin docker-compose，4 个容器）
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Docker 内部网络 caddy-net                                        │
+│ Docker 命名网络 caddy-net（外部项目可通过 external: true 加入）    │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │ caddy（唯一入口）                                         │   │
-│  │  端口：8443→443 / 8180→80 / 2019(Admin API)              │   │
-│  │  职责：按域名路由、自动签 SSL 证书、服务静态文件            │   │
+│  │  端口：443 / 8180→80 / 2019(Admin API)                   │   │
+│  │  职责：按域名路由、TLS 终结、服务静态文件                   │   │
+│  │  *.yeanhua.asia 通配符 catch-all（动态路由 prepend 在其前） │   │
 │  │                                                          │   │
-│  │  caddy-admin.localhost/api/* ──────────────────────────► │──►  caddy-admin-api:8090
-│  │  caddy-admin.localhost/*    → ./frontend/dist（bind mount）│   │  （本项目的 Go 后端）
-│  │  site-a.localhost/*         → ./mock-sites/static/site-a │   │
-│  │  api.site-a.localhost/*  ──────────────────────────────► │──►  site-a-api:8081
-│  │  site-b.localhost/*         → ./mock-sites/static/site-b │   │  （模拟项目 A 的 API）
-│  │  api.site-b.localhost/*  ──────────────────────────────► │──►  site-b-api:8082
-│  └──────────────────────────────────────────────────────────┘   │  （模拟项目 B 的 API）
+│  │  caddy-admin.yeanhua.asia/api/*  ────────────────────►   │──►  caddy-admin-api:8090
+│  │  caddy-admin.yeanhua.asia/*  → ./frontend/dist           │   │  （Go 后端 + 服务注册中心）
+│  │  site-a.yeanhua.asia/api/*   ────────────────────────►   │──►  site-a-api:8081
+│  │  site-b.yeanhua.asia/api/*   ────────────────────────►   │──►  site-b-api:8082
+│  │  project-c.yeanhua.asia/*    ────────────────────────►   │──►  project-c-frontend:80（动态注册）
+│  └──────────────────────────────────────────────────────────┘   │
 │                                                                 │
 │  caddy-admin-api                                                │
-│    职责：查询 caddy:2019/config/ → 解析站点和证书信息            │
-│    访问证书文件：caddy_data volume（Caddy 写入的证书目录）        │
+│    职责：① 查询 caddy:2019 → 解析站点和证书信息（只读）          │
+│         ② 服务注册 API → 动态写入 Caddy 路由 + 持久化            │
+│    数据：services_data volume → /app/data/services.json          │
 │                                                                 │
 │  site-a-api / site-b-api                                        │
-│    职责：模拟两个真实项目的后端 API（验证 Caddy 多项目反代）      │
+│    职责：Caddyfile 静态路由的模拟后端                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**为什么需要 4 个容器：**
+### 外部项目（独立 docker-compose，通过注册 API 接入）
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ project-c（独立 docker-compose，加入 caddy-net）                 │
+│                                                                 │
+│  project-c-backend  (:8080)    ← Go API                         │
+│  project-c-frontend (:80)     ← nginx: HTML + 反代 /api/*       │
+│  project-c-register (sidecar)  ← curl POST → caddy-admin-api    │
+│                                  注册完成后退出                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**请求流：**
+```
+Browser → Caddy(:443, TLS) → project-c-frontend(nginx:80) → /api/* → project-c-backend(:8080)
+                                                           → /*    → static HTML
+```
+
+### 两种路由方式对比
+
+| | Caddyfile 静态路由 | 动态注册路由 |
+|---|---|---|
+| 适用场景 | 基础设施自身的站点（caddy-admin, site-a, site-b） | 外部项目（project-c, 以及未来新增的项目） |
+| 配置方式 | 修改 Caddyfile → reload Caddy | `POST /api/services` → 即时生效 |
+| 重启恢复 | Caddy 自动从 Caddyfile 加载 | caddy-admin-api 启动时从 services.json sync |
+| 新项目是否需要改基础设施 | 需要改 Caddyfile + docker-compose | **不需要**——新项目自注册 |
+
+### 容器说明
 
 | 容器 | 角色 | 对应生产场景 |
 |------|------|------------|
-| `caddy` | 统一入口，管理所有域名和 SSL | ECS 上的 Caddy 系统服务 |
-| `caddy-admin-api` | 本项目的 Go 后端 | `/opt/caddy-admin/` 下的 docker compose |
-| `site-a-api` | 模拟项目 A 的后端 | 另一个项目的 docker compose |
-| `site-b-api` | 模拟项目 B 的后端 | 另一个项目的 docker compose |
+| `caddy` | 统一入口，管理所有域名和 TLS | ECS 上的 Caddy 系统服务 |
+| `caddy-admin-api` | 仪表盘后端 + 服务注册中心 | `/opt/caddy-admin/` 下的 docker compose |
+| `site-a-api` | 模拟项目 A 的后端（静态路由） | Caddyfile 直接配置的项目 |
+| `site-b-api` | 模拟项目 B 的后端（静态路由） | Caddyfile 直接配置的项目 |
 
-**关键设计：** Caddy 是唯一监听外部端口（443/80）的容器。其余三个只在内部网络监听，外部无法直接访问——所有流量必须经过 Caddy。这正是生产环境的样子：每个项目的 API 只暴露内网端口（8090/8081/8082），Caddy 按域名反代。
+**关键设计：** Caddy 是唯一监听外部端口（443/80）的容器。其余容器只在 `caddy-net` 内部网络监听，外部无法直接访问——所有流量必须经过 Caddy。
 
 ---
 
@@ -77,9 +113,11 @@ Caddy 本身不只是反代，**也直接提供前端页面**——静态文件�
 | `https://api.site-b.localhost:8443/*` | reverse_proxy | `site-b-api:8082` |
 | `http://localhost:2019/config/` | Admin API（Caddy 内建）| **Caddy 本身** |
 
-### caddy-admin-api（Go 后端）
+### caddy-admin-api（Go 后端 + 服务注册中心）
 
 内网端口：`8090`（本地调试时额外暴露到 host）
+
+**只读接口（仪表盘）：**
 
 | 接口 | 说明 | 数据来源 |
 |------|------|---------|
@@ -87,6 +125,15 @@ Caddy 本身不只是反代，**也直接提供前端页面**——静态文件�
 | `GET /api/sites` | 所有站点列表（域名/类型/upstream/CORS）| 解析 `caddy:2019/config/apps/http` |
 | `GET /api/sites/{domain}` | 单站点详情 | 同上，过滤 |
 | `GET /api/certs` | TLS 证书列表（颁发者/有效期）| 读 `caddy_data` volume 中的 `.crt` 文件 |
+
+**写入接口（服务注册）：**
+
+| 接口 | 说明 | 操作 |
+|------|------|------|
+| `POST /api/services` | 注册/更新服务 | Caddy upsert 路由 + 持久化到 services.json |
+| `DELETE /api/services/{name}` | 注销服务 | Caddy 删除路由 + 从 services.json 移除 |
+| `GET /api/services` | 列出已注册服务 | 读 services.json |
+| `POST /api/services/sync` | 手动触发同步 | 遍历 services.json → Caddy upsert |
 
 #### caddy:2019 是什么？
 
@@ -194,51 +241,63 @@ handle @api {
 
 ### 情况三：新增一个完全独立的后端项目
 
-需要两步，互相独立：
+**推荐方式：动态注册（不需要改任何基础设施文件）**
+
+新项目只需在 `docker-compose.yml` 中加一个 register sidecar，启动时自动注册到 Caddy：
 
 ```bash
-# 1. 新项目自己启动（与 caddy-admin 无关）
-cd /opt/new-project && docker compose up -d
+# 1. 新项目目录下创建 .env
+SERVICE_NAME=my-project
+SERVICE_DOMAIN=my-project.yeanhua.asia
+SERVICE_UPSTREAM=my-project-frontend:80
+CADDY_ADMIN_URL=http://caddy-admin-api:8090
 
-# 2. Caddyfile 追加站点块，reload（不重启现有服务）
-cat >> /etc/caddy/Caddyfile << 'EOF'
+# 2. docker-compose.yml 加入 caddy-net 并包含 register sidecar
+networks:
+  caddy-net:
+    external: true
 
-new-project.yeanhua.asia {
-    @api path /api/*
-    @static not path /api/*
-    handle @api { reverse_proxy localhost:8091 }
-    handle @static {
-        root * /var/www/new-project/dist
-        file_server
-        try_files {path} /index.html
-    }
-}
-EOF
-systemctl reload caddy   # 自动为新域名申请 SSL，已有站点不受影响
+# 3. 启动——register sidecar 会自动 POST /api/services 完成注册
+docker compose up -d
+```
+
+完整示例参考 `demos/project-c/`（包含 backend、frontend、register.sh、docker-compose.yml）。
+
+**备选方式：Caddyfile 静态路由（适合基础设施自身的站点）**
+
+```bash
+# 直接修改 Caddyfile 追加站点块，reload Caddy
+docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
 ### 汇总
 
-| 场景 | Caddyfile | 应用容器 |
-|------|-----------|---------|
-| 新增 `/api/*` 接口 | 不用改 | 不用重启 |
-| 新增非 `/api/` 接口 | 改 matcher → reload | 不用重启 |
-| 新增独立项目 | 追加站点块 → reload | 新项目 `docker compose up` |
+| 场景 | Caddyfile | 应用容器 | 需要改基础设施？ |
+|------|-----------|---------|---------------|
+| 新增 `/api/*` 接口 | 不用改 | 不用重启 | 否 |
+| 新增非 `/api/` 接口 | 改 matcher → reload | 不用重启 | 是 |
+| 新增独立项目（动态注册） | 不用改 | 新项目 `docker compose up` | **否** |
+| 新增独立项目（静态路由） | 追加站点块 → reload | 新项目 `docker compose up` | 是 |
 
 ## 架构（生产）
 
 ```
-Browser → caddy-admin.yeanhua.asia (HTTPS 443)
+Browser → *.yeanhua.asia (HTTPS 443, 通配符证书)
              ↓
-         Caddy (单进程，自动 SSL)
-           ├── caddy-admin.yeanhua.asia/api/* → localhost:8090 (caddy-admin Go API)
-           ├── caddy-admin.yeanhua.asia/*     → /var/www/caddy-admin/dist (React 静态)
-           ├── project-b.yeanhua.asia/api/*   → localhost:8091 (project-b API)
-           └── ...（每新增项目追加两段 Caddyfile，reload 即可）
+         Caddy (单进程，TLS 终结)
+           ├── caddy-admin.yeanhua.asia/api/* → caddy-admin-api:8090    [Caddyfile 静态]
+           ├── caddy-admin.yeanhua.asia/*     → /var/www/caddy-admin/dist
+           ├── site-a.yeanhua.asia/*          → site-a-api:8081         [Caddyfile 静态]
+           ├── project-c.yeanhua.asia/*       → project-c-frontend:80   [动态注册]
+           ├── new-project.yeanhua.asia/*     → ...                     [动态注册]
+           └── *.yeanhua.asia                 → 404 catch-all
              ↓
          caddy-admin-api (Go)
-           └── 查询 Caddy Admin API (localhost:2019) + 读证书文件
+           ├── 只读：查询 Caddy Admin API + 读证书文件
+           └── 写入：服务注册 API → Caddy 动态路由 + services.json 持久化
 ```
+
+新项目接入不再需要改 Caddyfile——启动时自动注册，基础设施零改动。
 
 ---
 
@@ -360,6 +419,7 @@ sudo tee -a /etc/hosts <<EOF
 127.0.0.1  caddy-admin.yeanhua.asia
 127.0.0.1  site-a.yeanhua.asia
 127.0.0.1  site-b.yeanhua.asia
+127.0.0.1  project-c.yeanhua.asia
 EOF
 ```
 
@@ -484,6 +544,7 @@ make test-caddy-api
 curl -s http://localhost:2019/config/apps/http/servers  # Caddy 原始 config
 curl -s http://localhost:8090/api/sites                 # caddy-admin 解析结果
 curl -s http://localhost:8090/api/certs                 # 证书列表
+curl -s http://localhost:8090/api/services              # 已注册的动态服务
 ```
 `localhost:2019` 是 Caddy Admin API，直接暴露到 host 方便调试；`localhost:8090` 是 caddy-admin 后端，同样直接暴露。在生产环境两者都不对外暴露——Caddy 只暴露 80/443，Admin API 仅 `localhost:2019` 监听。
 
@@ -498,22 +559,22 @@ curl -s http://localhost:8090/api/certs                 # 证书列表
 ### 部署
 
 ```bash
-# 添加 DNS A 记录（阿里云控制台 → DNS）：
-#   caddy-admin.yeanhua.asia → ECS IP
-#   site-a.yeanhua.asia      → ECS IP
-#   site-b.yeanhua.asia      → ECS IP
+# 添加 DNS A 记录（推荐泛域名 *.yeanhua.asia → ECS IP）
+# 这样动态注册的新子域名无需额外添加 DNS 记录
 
 # 一键部署
 ECS_IP=<your-ecs-ip> ./deploy/deploy.sh
 
 # 验证
 curl -sf https://caddy-admin.yeanhua.asia/api/sites
-curl -sf https://caddy-admin.yeanhua.asia/api/certs
+curl -sf https://caddy-admin.yeanhua.asia/api/services
 ```
 
 ---
 
 ## API
+
+### 只读（仪表盘）
 
 | 端点 | 说明 |
 |------|------|
@@ -522,18 +583,55 @@ curl -sf https://caddy-admin.yeanhua.asia/api/certs
 | `GET /api/sites/{domain}` | 单站点详情 |
 | `GET /api/certs` | TLS 证书列表 |
 
+### 读写（服务注册）
+
+| 端点 | 说明 | 请求体/参数 |
+|------|------|------------|
+| `GET /api/services` | 列出已注册服务 | - |
+| `POST /api/services` | 注册/更新服务 | `{"name":"xxx","domain":"xxx.yeanhua.asia","upstream":"container:port"}` |
+| `DELETE /api/services/{name}` | 注销服务 | URL 路径参数 `name` |
+| `POST /api/services/sync` | 手动触发同步 | - |
+
 ---
 
 ## 目录结构
 
 ```
-caddy-admin/
-├── backend/          # Go API（查询 Caddy Admin API）
-├── frontend/         # React + Vite + TypeScript
-├── caddy/            # 本地模拟 Caddyfile
-├── mock-sites/       # 本地模拟用的静态页面和 mock API
-├── deploy/           # 生产部署模板（Caddyfile + docker-compose + deploy.sh）
+caddy-admin/                        # 基础设施
+├── caddy-admin/
+│   ├── backend/
+│   │   ├── caddy/
+│   │   │   ├── client.go           # Caddy Admin API 客户端（读 + 写）
+│   │   │   ├── route_builder.go    # 动态路由 JSON 构建
+│   │   │   ├── parser.go           # 配置解析
+│   │   │   └── types.go            # Caddy 配置类型定义
+│   │   ├── handlers/
+│   │   │   ├── sites.go            # 站点查询（只读）
+│   │   │   ├── certs.go            # 证书查询（只读）
+│   │   │   ├── services.go         # 服务注册/注销/列表/同步
+│   │   │   └── helpers.go          # JSON 响应工具函数
+│   │   ├── store/
+│   │   │   └── file_store.go       # services.json 持久化层
+│   │   └── main.go                 # 入口 + syncToCaddy + CORS
+│   └── frontend/                   # React + Vite + TypeScript
+├── caddy/
+│   └── Caddyfile                   # 静态路由 + *.yeanhua.asia 通配符 catch-all
+├── site-a/ site-b/                 # 模拟项目（静态路由）
+├── deploy/                         # 生产部署模板
 ├── docker-compose.yml
+└── Makefile
+
+demos/project-c/                    # 动态注册验证项目（独立 docker-compose）
+├── backend/
+│   ├── main.go                     # Go HTTP :8080
+│   └── Dockerfile
+├── frontend/
+│   ├── index.html                  # 简单 HTML，fetch /api/hello
+│   ├── nginx.conf                  # 反代 /api/* → backend
+│   └── Dockerfile
+├── register.sh                     # 等待 caddy-admin → curl POST /api/services
+├── docker-compose.yml              # 3 services + external caddy-net
+├── .env                            # SERVICE_NAME, DOMAIN, UPSTREAM, CADDY_ADMIN_URL
 └── Makefile
 ```
 
@@ -541,11 +639,231 @@ caddy-admin/
 
 ## 可复用模板
 
-`deploy/Caddyfile` 和 `deploy/docker-compose.yml` 可作为新项目的起点：
+### 新项目接入（动态注册方式，推荐）
+
+以 `demos/project-c/` 为模板，新项目只需 4 个文件即可接入：
+
+```
+my-project/
+├── docker-compose.yml    # 加入 external caddy-net + register sidecar
+├── register.sh           # 等待 caddy-admin → POST /api/services
+├── .env                  # SERVICE_NAME / DOMAIN / UPSTREAM / CADDY_ADMIN_URL
+└── ...（你的 backend/frontend）
+```
 
 ```bash
-# 新项目接入 Caddy 只需三步：
-# 1. 在 /etc/caddy/Caddyfile 追加两个站点块（前端 + API）
-# 2. 在 /opt/{project}/ 放 docker-compose.yml，docker compose up -d
-# 3. systemctl reload caddy → SSL 自动签发
+# 启动即自动注册，无需改基础设施任何文件
+cd my-project && docker compose up -d
 ```
+
+### 新项目接入（Caddyfile 静态方式）
+
+```bash
+# 1. 在 Caddyfile 追加站点块
+# 2. docker compose up -d（新项目）
+# 3. docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+```
+
+---
+
+## 动态服务注册：操作说明
+
+### 注册服务
+
+```bash
+curl -X POST http://localhost:8090/api/services \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-svc","domain":"my-svc.yeanhua.asia","upstream":"my-svc-frontend:80"}'
+# → {"registered":true,"name":"my-svc","domain":"my-svc.yeanhua.asia","upstream":"my-svc-frontend:80"}
+```
+
+字段说明：
+
+| 字段 | 必填 | 说明 | 示例 |
+|------|------|------|------|
+| `name` | 是 | 服务唯一标识（用于路由 @id 和注销） | `project-c` |
+| `domain` | 是 | 域名（必须是 `*.yeanhua.asia` 子域名，通配符证书覆盖） | `project-c.yeanhua.asia` |
+| `upstream` | 是 | Docker 内网地址（容器名:端口） | `project-c-frontend:80` |
+
+### 注销服务
+
+```bash
+curl -X DELETE http://localhost:8090/api/services/my-svc
+# → {"deleted":true,"name":"my-svc"}
+```
+
+### 查看已注册服务
+
+```bash
+curl http://localhost:8090/api/services
+# → {"services":[...],"total":1}
+```
+
+### 手动触发同步（services.json → Caddy）
+
+```bash
+curl -X POST http://localhost:8090/api/services/sync
+# → {"synced":1,"total":1,"errors":null}
+```
+
+### 验证路由已注入 Caddy
+
+```bash
+curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
+  | python3 -c "import sys,json; routes=json.load(sys.stdin); [print(r.get('@id','')) for r in routes if r.get('@id','')]"
+# → svc-project-c
+```
+
+### 启动时自动恢复
+
+caddy-admin-api 启动时执行 `syncToCaddy()`：
+1. 等待 Caddy Admin API 就绪（重试 15 次，每次 2 秒）
+2. 读取 `services.json` 中所有持久化的服务
+3. 逐个调用 `UpsertRoute()` 写入 Caddy
+
+日志示例：
+```
+sync: waiting for caddy... (1/15)
+sync: restored 1/1 services to caddy
+```
+
+---
+
+## 测试流程
+
+### 前提
+
+- 基础设施已启动：`cd demos/caddy-admin && docker compose up -d --build`
+- 本地 DNS 已配置：`/etc/hosts` 包含 `*.yeanhua.asia` 解析到 `127.0.0.1`
+
+### 1. 基础设施健康检查
+
+```bash
+# Caddy 在线
+curl -s http://localhost:8090/api/status
+# → {"caddy":true}
+
+# Caddy server 名确认为 srv0
+curl -s http://localhost:2019/config/apps/http/servers | python3 -m json.tool | head -3
+# → { "srv0": { ...
+
+# 已注册服务列表（初始应为空）
+curl -s http://localhost:8090/api/services
+# → {"services":[],"total":0}
+curl -s https://caddy-admin.yeanhua.asia/api/services
+
+# caddy-admin-api 启动日志（确认 sync 成功）
+docker logs caddy-admin-caddy-admin-api-1 --tail 5
+```
+
+### 2. 手动注册/注销测试
+
+```bash
+# 注册测试服务
+curl -s -X POST http://localhost:8090/api/services \
+  -H "Content-Type: application/json" \
+  -d '{"name":"test","domain":"test.yeanhua.asia","upstream":"localhost:9999"}'
+# → {"registered":true,...}
+
+# 验证路由已注入 Caddy（应出现 svc-test）
+curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
+  | python3 -c "import sys,json; [print(r['@id']) for r in json.load(sys.stdin) if '@id' in r]"
+# → svc-test
+
+# 验证持久化
+curl -s http://localhost:8090/api/services
+# → {"services":[{"name":"test",...}],"total":1}
+
+# 注销
+curl -s -X DELETE http://localhost:8090/api/services/test
+# → {"deleted":true,"name":"test"}
+
+# 验证已从 Caddy 删除（无输出）
+curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
+  | python3 -c "import sys,json; [print(r['@id']) for r in json.load(sys.stdin) if '@id' in r]"
+```
+
+### 3. project-c 端到端测试
+
+```bash
+# 启动 project-c
+cd demos/project-c && docker compose up -d --build
+
+# 查看 register sidecar 日志（应显示注册成功）
+docker compose logs project-c-register
+# → "project-c registered successfully."
+
+# 验证路由已注入 Caddy
+curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
+  | python3 -c "import sys,json; [print(r['@id']) for r in json.load(sys.stdin) if '@id' in r]"
+# → svc-project-c
+
+# 通过 Caddy 访问 project-c（HTTPS）
+# 方式 A：openssl（推荐，macOS curl 有 TLS 兼容性问题）
+echo -e "GET / HTTP/1.1\r\nHost: project-c.yeanhua.asia\r\nConnection: close\r\n\r\n" \
+  | openssl s_client -connect localhost:443 -servername project-c.yeanhua.asia -quiet 2>/dev/null
+# → 200 OK，返回 HTML
+
+echo -e "GET /api/hello HTTP/1.1\r\nHost: project-c.yeanhua.asia\r\nConnection: close\r\n\r\n" \
+  | openssl s_client -connect localhost:443 -servername project-c.yeanhua.asia -quiet 2>/dev/null
+# → {"message":"Hello from Project C API","port":"8080"}
+
+# 方式 B：浏览器直接访问
+# https://project-c.yeanhua.asia/
+# 点击按钮 → 调用 /api/hello → 显示 JSON 结果
+```
+
+> **macOS curl TLS 注意事项：** macOS 自带的 `curl`（LibreSSL 3.3.6）与 Caddy 的 ECDSA 证书可能存在 TLS 握手兼容性问题（exit code 35）。这不影响浏览器和 `openssl` 访问。如需 curl 测试，可用 `brew install curl` 安装 OpenSSL 版本。
+
+### 4. 持久化恢复测试（Caddy 重启）
+
+```bash
+# 重启 Caddy + caddy-admin-api
+cd demos/caddy-admin
+docker compose restart caddy caddy-admin-api
+
+# 等待 sync 完成（约 10 秒）
+sleep 10
+
+# 检查日志确认恢复
+docker logs caddy-admin-caddy-admin-api-1 --tail 3
+# → "sync: restored 1/1 services to caddy"
+
+# 验证路由仍在
+curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
+  | python3 -c "import sys,json; [print(r['@id']) for r in json.load(sys.stdin) if '@id' in r]"
+# → svc-project-c
+
+# 验证 project-c 仍可访问
+echo -e "GET /api/hello HTTP/1.1\r\nHost: project-c.yeanhua.asia\r\nConnection: close\r\n\r\n" \
+  | openssl s_client -connect localhost:443 -servername project-c.yeanhua.asia -quiet 2>/dev/null
+# → {"message":"Hello from Project C API","port":"8080"}
+```
+
+### 5. 清理
+
+```bash
+# 注销 project-c
+curl -X DELETE http://localhost:8090/api/services/project-c
+
+# 停止 project-c 容器
+cd demos/project-c && docker compose down
+
+# （可选）停止基础设施
+cd demos/caddy-admin && docker compose down
+```
+
+### 测试检查清单
+
+| # | 测试项 | 预期结果 | 命令 |
+|---|--------|---------|------|
+| 1 | caddy-admin-api 启动 | sync 日志正常 | `docker logs ... --tail 5` |
+| 2 | POST 注册 | `{"registered":true}` | `curl -X POST ...` |
+| 3 | Caddy 路由注入 | 出现 `svc-{name}` | `curl localhost:2019/...` |
+| 4 | 持久化写入 | services 列表非空 | `curl localhost:8090/api/services` |
+| 5 | DELETE 注销 | `{"deleted":true}` + 路由消失 | `curl -X DELETE ...` |
+| 6 | project-c sidecar 注册 | 日志 "registered successfully" | `docker compose logs ...` |
+| 7 | 端到端 HTML | 200 OK，返回 HTML | `openssl s_client ...` |
+| 8 | 端到端 API | `{"message":"Hello from Project C API"}` | `openssl s_client ...` |
+| 9 | 重启后恢复 | "sync: restored N/N" | `docker logs ...` |
+| 10 | 重启后路由在 | `svc-project-c` 仍存在 | `curl localhost:2019/...` |

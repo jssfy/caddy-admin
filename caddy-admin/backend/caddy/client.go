@@ -1,6 +1,7 @@
 package caddy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,4 +54,59 @@ func (c *Client) IsRunning() bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// AddRoute prepends a route to srv0's route list.
+func (c *Client) AddRoute(routeJSON json.RawMessage) error {
+	url := c.baseURL + "/config/apps/http/servers/srv0/routes/0"
+	_, err := c.do(http.MethodPut, url, routeJSON)
+	return err
+}
+
+// RemoveRoute deletes a route by its @id. 404 is treated as success.
+func (c *Client) RemoveRoute(name string) error {
+	url := c.baseURL + "/id/svc-" + name
+	resp, err := c.do(http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return nil
+}
+
+// UpsertRoute removes then adds a route for the given service.
+func (c *Client) UpsertRoute(svc ServiceConfig) error {
+	_ = c.RemoveRoute(svc.Name)
+	route := BuildCaddyRoute(svc)
+	return c.AddRoute(route)
+}
+
+func (c *Client) do(method, url string, body json.RawMessage) (*http.Response, error) {
+	var req *http.Request
+	var err error
+	if body != nil {
+		req, err = http.NewRequest(method, url, bytes.NewReader(body))
+	} else {
+		req, err = http.NewRequest(method, url, nil)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("caddy admin api: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound {
+		respBody, _ := io.ReadAll(resp.Body)
+		return resp, fmt.Errorf("caddy returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	return resp, nil
 }
