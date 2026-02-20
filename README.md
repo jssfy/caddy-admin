@@ -436,8 +436,9 @@ ECS 生产环境不需要这步——通过阿里云 DNS API 添加 A 记录：
 # 配置保存在 ~/.aliyun/config.json，只需执行一次
 
 ECS_IP=<your-ecs-ip>
+# caddy-admin site-a site-b
 ECS_IP=121.41.107.93
-for rr in caddy-admin site-a site-b; do
+for rr in project-c; do
   aliyun alidns AddDomainRecord \
     --DomainName yeanhua.asia \
     --RR "$rr" \
@@ -740,17 +741,18 @@ sync: restored 1/1 services to caddy
 
 ```bash
 # Caddy 在线
-curl -s http://localhost:8090/api/status
+curl -s http://localhost:8090/api/status                        # 直连后端
+curl -s https://caddy-admin.yeanhua.asia/api/status             # 走域名
 # → {"caddy":true}
 
-# Caddy server 名确认为 srv0
+# Caddy server 名确认为 srv0（仅 Admin API 端口，无域名路由）
 curl -s http://localhost:2019/config/apps/http/servers | python3 -m json.tool | head -3
 # → { "srv0": { ...
 
 # 已注册服务列表（初始应为空）
-curl -s http://localhost:8090/api/services
+curl -s http://localhost:8090/api/services                      # 直连后端
+curl -s https://caddy-admin.yeanhua.asia/api/services           # 走域名
 # → {"services":[],"total":0}
-curl -s https://caddy-admin.yeanhua.asia/api/services
 
 # caddy-admin-api 启动日志（确认 sync 成功）
 docker logs caddy-admin-caddy-admin-api-1 --tail 5
@@ -763,19 +765,26 @@ docker logs caddy-admin-caddy-admin-api-1 --tail 5
 curl -s -X POST http://localhost:8090/api/services \
   -H "Content-Type: application/json" \
   -d '{"name":"test","domain":"test.yeanhua.asia","upstream":"localhost:9999"}'
+# 走域名：
+curl -s -X POST https://caddy-admin.yeanhua.asia/api/services \
+  -H "Content-Type: application/json" \
+  -d '{"name":"test","domain":"test.yeanhua.asia","upstream":"localhost:9999"}'
 # → {"registered":true,...}
 
 # 验证路由已注入 Caddy（应出现 svc-test）
+# ⚠ localhost:2019 是 Caddy Admin API 调试端口，无域名路由，只能 localhost
 curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
   | python3 -c "import sys,json; [print(r['@id']) for r in json.load(sys.stdin) if '@id' in r]"
 # → svc-test
 
 # 验证持久化
-curl -s http://localhost:8090/api/services
+curl -s http://localhost:8090/api/services                      # 直连后端
+curl -s https://caddy-admin.yeanhua.asia/api/services           # 走域名
 # → {"services":[{"name":"test",...}],"total":1}
 
 # 注销
-curl -s -X DELETE http://localhost:8090/api/services/test
+curl -s -X DELETE http://localhost:8090/api/services/test       # 直连后端
+curl -s -X DELETE https://caddy-admin.yeanhua.asia/api/services/test  # 走域名
 # → {"deleted":true,"name":"test"}
 
 # 验证已从 Caddy 删除（无输出）
@@ -798,8 +807,12 @@ curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
   | python3 -c "import sys,json; [print(r['@id']) for r in json.load(sys.stdin) if '@id' in r]"
 # → svc-project-c
 
-# 通过 Caddy 访问 project-c（HTTPS）
-# 方式 A：openssl（推荐，macOS curl 有 TLS 兼容性问题）
+# 通过域名访问 project-c
+# 方式 A：浏览器（推荐）
+#   https://project-c.yeanhua.asia/
+#   点击按钮 → 调用 /api/hello → 显示 JSON 结果
+
+# 方式 B：openssl（终端验证，macOS curl 有 TLS 兼容性问题）
 echo -e "GET / HTTP/1.1\r\nHost: project-c.yeanhua.asia\r\nConnection: close\r\n\r\n" \
   | openssl s_client -connect localhost:443 -servername project-c.yeanhua.asia -quiet 2>/dev/null
 # → 200 OK，返回 HTML
@@ -807,10 +820,6 @@ echo -e "GET / HTTP/1.1\r\nHost: project-c.yeanhua.asia\r\nConnection: close\r\n
 echo -e "GET /api/hello HTTP/1.1\r\nHost: project-c.yeanhua.asia\r\nConnection: close\r\n\r\n" \
   | openssl s_client -connect localhost:443 -servername project-c.yeanhua.asia -quiet 2>/dev/null
 # → {"message":"Hello from Project C API","port":"8080"}
-
-# 方式 B：浏览器直接访问
-# https://project-c.yeanhua.asia/
-# 点击按钮 → 调用 /api/hello → 显示 JSON 结果
 ```
 
 > **macOS curl TLS 注意事项：** macOS 自带的 `curl`（LibreSSL 3.3.6）与 Caddy 的 ECDSA 证书可能存在 TLS 握手兼容性问题（exit code 35）。这不影响浏览器和 `openssl` 访问。如需 curl 测试，可用 `brew install curl` 安装 OpenSSL 版本。
@@ -835,16 +844,24 @@ curl -s http://localhost:2019/config/apps/http/servers/srv0/routes \
 # → svc-project-c
 
 # 验证 project-c 仍可访问
+# 浏览器：https://project-c.yeanhua.asia/api/hello
+# 终端：
 echo -e "GET /api/hello HTTP/1.1\r\nHost: project-c.yeanhua.asia\r\nConnection: close\r\n\r\n" \
   | openssl s_client -connect localhost:443 -servername project-c.yeanhua.asia -quiet 2>/dev/null
 # → {"message":"Hello from Project C API","port":"8080"}
+
+# 验证 services API 仍可用
+curl -s https://caddy-admin.yeanhua.asia/api/services           # 走域名
+# → {"services":[{"name":"project-c",...}],"total":1}
 ```
 
 ### 5. 清理
 
 ```bash
 # 注销 project-c
-curl -X DELETE http://localhost:8090/api/services/project-c
+curl -X DELETE http://localhost:8090/api/services/project-c             # 直连后端
+# 或走域名：
+curl -X DELETE https://caddy-admin.yeanhua.asia/api/services/project-c  # 走域名
 
 # 停止 project-c 容器
 cd demos/project-c && docker compose down
@@ -853,17 +870,26 @@ cd demos/project-c && docker compose down
 cd demos/caddy-admin && docker compose down
 ```
 
+### 域名 vs localhost 速查
+
+| 接口 | localhost（直连后端） | 域名（走 Caddy 反代） |
+|------|---------------------|---------------------|
+| caddy-admin API | `http://localhost:8090/api/*` | `https://caddy-admin.yeanhua.asia/api/*` |
+| Caddy Admin API | `http://localhost:2019/*` | **无域名**（调试端口，仅 localhost） |
+| project-c 页面 | — | `https://project-c.yeanhua.asia/` |
+| project-c API | — | `https://project-c.yeanhua.asia/api/hello` |
+
 ### 测试检查清单
 
-| # | 测试项 | 预期结果 | 命令 |
-|---|--------|---------|------|
-| 1 | caddy-admin-api 启动 | sync 日志正常 | `docker logs ... --tail 5` |
-| 2 | POST 注册 | `{"registered":true}` | `curl -X POST ...` |
-| 3 | Caddy 路由注入 | 出现 `svc-{name}` | `curl localhost:2019/...` |
-| 4 | 持久化写入 | services 列表非空 | `curl localhost:8090/api/services` |
-| 5 | DELETE 注销 | `{"deleted":true}` + 路由消失 | `curl -X DELETE ...` |
-| 6 | project-c sidecar 注册 | 日志 "registered successfully" | `docker compose logs ...` |
-| 7 | 端到端 HTML | 200 OK，返回 HTML | `openssl s_client ...` |
-| 8 | 端到端 API | `{"message":"Hello from Project C API"}` | `openssl s_client ...` |
-| 9 | 重启后恢复 | "sync: restored N/N" | `docker logs ...` |
-| 10 | 重启后路由在 | `svc-project-c` 仍存在 | `curl localhost:2019/...` |
+| # | 测试项 | 预期结果 | 直连命令 | 域名命令 |
+|---|--------|---------|---------|---------|
+| 1 | caddy-admin-api 启动 | sync 日志正常 | `docker logs ... --tail 5` | — |
+| 2 | POST 注册 | `{"registered":true}` | `curl -X POST localhost:8090/...` | `curl -X POST https://caddy-admin.yeanhua.asia/...` |
+| 3 | Caddy 路由注入 | 出现 `svc-{name}` | `curl localhost:2019/...` | **仅 localhost** |
+| 4 | 持久化写入 | services 列表非空 | `curl localhost:8090/api/services` | `curl https://caddy-admin.yeanhua.asia/api/services` |
+| 5 | DELETE 注销 | `{"deleted":true}` | `curl -X DELETE localhost:8090/...` | `curl -X DELETE https://caddy-admin.yeanhua.asia/...` |
+| 6 | sidecar 注册 | "registered successfully" | `docker compose logs ...` | — |
+| 7 | 端到端 HTML | 200 OK | `openssl s_client ...` | 浏览器 `https://project-c.yeanhua.asia/` |
+| 8 | 端到端 API | `{"message":"Hello..."}` | `openssl s_client ...` | 浏览器 `https://project-c.yeanhua.asia/api/hello` |
+| 9 | 重启后恢复 | "sync: restored N/N" | `docker logs ...` | — |
+| 10 | 重启后路由在 | `svc-project-c` 仍在 | `curl localhost:2019/...` | **仅 localhost** |
