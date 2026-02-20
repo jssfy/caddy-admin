@@ -1,0 +1,59 @@
+services:
+
+  # ─── Caddy: single process managing all virtual hosts ──────────────────────
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8180:80"
+      - "8443:443"
+      - "2019:2019"   # Admin API (expose for local debugging)
+    # Note: using 8180/8443 locally because 80/443 may be taken
+    # In production (ECS) change back to 80:80 and 443:443
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ~/certs/yeanhua.asia:/etc/caddy/certs:ro            # acme.sh 签发的通配符证书
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./site-a/static:/var/www/site-a:ro
+      - ./site-b/static:/var/www/site-b:ro
+      - ./caddy-admin/frontend/dist:/var/www/caddy-admin/dist:ro
+    networks: [caddy-net]
+    depends_on:
+      - caddy-admin-api
+      - site-a-api
+      - site-b-api
+
+  # ─── Project: caddy-admin ───────────────────────────────────────────────────
+  caddy-admin-api:
+    build:
+      context: ./caddy-admin/backend
+    ports:
+      - "8090:8090"   # exposed for local testing; remove in prod (Caddy proxies internally)
+    environment:
+      CADDY_ADMIN_ADDR: caddy:2019
+      CADDY_CERT_STORE: /data/caddy/caddy
+      EXTERNAL_CERT_DIR: /external-certs
+      LISTEN_ADDR: ":8090"
+    volumes:
+      - caddy_data:/data/caddy:ro
+      - ~/certs/yeanhua.asia:/external-certs:ro   # 读取 acme.sh 签发的外部证书
+    networks: [caddy-net]
+
+  # ─── Project: site-a ────────────────────────────────────────────────────────
+  site-a-api:
+    build:
+      context: ./site-a/api
+    networks: [caddy-net]
+
+  # ─── Project: site-b ────────────────────────────────────────────────────────
+  site-b-api:
+    build:
+      context: ./site-b/api
+    networks: [caddy-net]
+
+networks:
+  caddy-net:
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,44 @@
+# Production Caddyfile Template
+# Replace {project}, {port}, {domain} placeholders for each new project
+#
+# Usage:
+#   1. Copy this file to /etc/caddy/Caddyfile on your ECS
+#   2. Replace placeholders
+#   3. systemctl reload caddy  (SSL auto-issued, no other action needed)
+
+# ─── Project: caddy-admin ───────────────────────────────────────────────────
+
+caddy-admin.yeanhua.asia {
+    encode gzip
+
+    @api path /api/*
+    @static not path /api/*
+
+    handle @api {
+        reverse_proxy localhost:8090
+    }
+
+    handle @static {
+        root * /var/www/caddy-admin/dist
+        file_server
+        try_files {path} /index.html
+    }
+}
+
+# ─── Project Template (copy & fill for each new project) ────────────────────
+#
+# {project}.yeanhua.asia {
+#     root * /var/www/{project}/dist
+#     file_server
+#     try_files {path} /index.html
+#     encode gzip
+# }
+#
+# api.{project}.yeanhua.asia {
+#     reverse_proxy localhost:{port}
+#     header {
+#         Access-Control-Allow-Origin "https://{project}.yeanhua.asia"
+#         Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+#         Access-Control-Allow-Headers "Authorization, Content-Type"
+#     }
+# }

@@ -1,0 +1,22 @@
+# Production Docker Compose Template for caddy-admin
+# Deploy on ECS alongside other projects
+#
+# Each project gets its own docker-compose.yml under /opt/{project}/
+# Caddy is managed separately (system service, not in Docker)
+
+services:
+  api:
+    build: .
+    restart: always
+    ports:
+      - "8090:8090"    # Caddy reverse proxies to this port
+    environment:
+      CADDY_ADMIN_ADDR: "localhost:2019"
+      CADDY_CERT_STORE: "/var/lib/caddy"
+      LISTEN_ADDR: ":8090"
+    volumes:
+      - /var/lib/caddy:/data/caddy:ro    # Read Caddy cert storage (system Caddy path)
+
+# Note: No db service needed (read-only admin panel)
+# Note: Frontend static files are served directly by Caddy (not by this container)
+#       Deploy frontend: rsync -avz frontend/dist/ root@<ECS_IP>:/var/www/caddy-admin/dist/

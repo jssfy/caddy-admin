@@ -1,0 +1,68 @@
+{
+    # Enable Admin API (accessible from caddy-admin-api container)
+    admin 0.0.0.0:2019
+}
+
+# 通配符证书，所有 *.yeanhua.asia 站点共用
+(tls_yeanhua) {
+    tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/key.pem
+}
+
+# caddy-admin frontend + API (same domain, /api/* prefix)
+# Frontend calls /api/* → Caddy proxies to caddy-admin-api:8090
+# Everything else → static files with SPA fallback
+caddy-admin.yeanhua.asia {
+    import tls_yeanhua
+    encode gzip
+
+    @api path /api/*
+    @static not path /api/*
+
+    handle @api {
+        reverse_proxy caddy-admin-api:8090
+    }
+
+    handle @static {
+        root * /var/www/caddy-admin/dist
+        file_server
+        try_files {path} /index.html
+    }
+}
+
+# Mock project A: static site + API (same domain, /api/* prefix)
+site-a.yeanhua.asia {
+    import tls_yeanhua
+    encode gzip
+
+    @api path /api/*
+    @static not path /api/*
+
+    handle @api {
+        reverse_proxy site-a-api:8081
+    }
+
+    handle @static {
+        root * /var/www/site-a
+        file_server
+        try_files {path} /index.html
+    }
+}
+
+# Mock project B: static site + API (same domain, /api/* prefix)
+site-b.yeanhua.asia {
+    import tls_yeanhua
+    encode gzip
+
+    @api path /api/*
+    @static not path /api/*
+
+    handle @api {
+        reverse_proxy site-b-api:8082
+    }
+
+    handle @static {
+        root * /var/www/site-b
+        file_server
+        try_files {path} /index.html
+    }
+}
