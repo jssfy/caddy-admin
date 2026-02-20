@@ -22,6 +22,10 @@ gh repo create caddy-admin \
 
 ```
 
+## 新项目添加动态注册功能
+
+- 使用 skill: plugin/README.md
+
 ## 容器关系
 
 ### 基础设施（caddy-admin docker-compose，4 个容器）
@@ -436,9 +440,9 @@ ECS 生产环境不需要这步——通过阿里云 DNS API 添加 A 记录：
 # 配置保存在 ~/.aliyun/config.json，只需执行一次
 
 ECS_IP=<your-ecs-ip>
-# caddy-admin site-a site-b
+# caddy-admin site-a site-b project-c
 ECS_IP=121.41.107.93
-for rr in project-c; do
+for rr in project-d-stripe; do
   aliyun alidns AddDomainRecord \
     --DomainName yeanhua.asia \
     --RR "$rr" \

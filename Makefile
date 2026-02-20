@@ -1,4 +1,4 @@
-.PHONY: build-frontend up down logs clean
+.PHONY: build-frontend up down logs clean add-dns
 
 # Build frontend static files (required before first `make up`)
 build-frontend:
@@ -37,6 +37,23 @@ test-caddy-api:
 	@echo ""
 	@echo "=== caddy-admin certs API ==="
 	curl -s http://localhost:8090/api/certs | python3 -m json.tool
+
+# Add DNS A record for a new project: make add-dns RR=my-project
+ECS_IP ?= 121.41.107.93
+add-dns:
+ifndef RR
+	$(error Usage: make add-dns RR=<subdomain>  Example: make add-dns RR=project-c)
+endif
+	aliyun alidns AddDomainRecord \
+		--DomainName yeanhua.asia \
+		--RR "$(RR)" \
+		--Type A \
+		--Value "$(ECS_IP)"
+	@echo ""
+	@echo "DNS record added: $(RR).yeanhua.asia -> $(ECS_IP)"
+	@echo "Verifying..."
+	@sleep 3
+	@dig +short $(RR).yeanhua.asia || echo "(may take a few minutes to propagate)"
 
 clean:
 	docker compose down -v
