@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, Route, Routes, useLocation } from 'react-router-dom'
 import { api } from './api/client'
 import CertList from './pages/CertList'
+import ServiceList from './pages/ServiceList'
 import SiteDetail from './pages/SiteDetail'
 import SiteList from './pages/SiteList'
 
@@ -41,6 +42,7 @@ export default function App() {
         </Link>
         <Link to="/sites" style={isActive('/sites') ? s.navLinkActive : s.navLink}>Sites</Link>
         <Link to="/certs" style={isActive('/certs') ? s.navLinkActive : s.navLink}>Certificates</Link>
+        <Link to="/services" style={isActive('/services') ? s.navLinkActive : s.navLink}>Services</Link>
         <span style={{ marginLeft: 'auto', fontSize: 13, color: '#475569' }}>
           Caddy: {caddyRunning === null ? '...' : caddyRunning ? '● running' : '● offline'}
         </span>
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="/sites" element={<SiteList />} />
           <Route path="/sites/:domain" element={<SiteDetail />} />
           <Route path="/certs" element={<CertList />} />
+          <Route path="/services" element={<ServiceList />} />
         </Routes>
       </main>
     </div>

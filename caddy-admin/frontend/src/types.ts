@@ -28,6 +28,17 @@ export interface CertsResponse {
   message?: string
 }
 
+export interface ServiceInfo {
+  name: string
+  domain: string
+  upstream: string
+}
+
+export interface ServicesResponse {
+  services: ServiceInfo[]
+  total: number
+}
+
 export interface StatusResponse {
   caddy: boolean
 }
