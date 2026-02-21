@@ -53,6 +53,37 @@ make hosts-add
 
 ---
 
+### 新项目接入（Claude Code Plugin）
+
+基础设施启动后，通过 skill 一键生成新项目并自动注册到 Caddy。
+
+**安装 plugin（一次性）：**
+
+```bash
+claude plugin marketplace add jssfy/caddy-admin
+claude plugin install caddy-admin@jssfy-caddy-admin
+```
+
+**生成并启动新项目：**
+
+```bash
+# 在 Claude Code 中执行 skill（支持 go / node / static）
+/caddy-admin:scaffold-service my-project
+/caddy-admin:scaffold-service my-project --lang node
+/caddy-admin:scaffold-service my-project --lang static
+
+# 启动，register sidecar 自动 POST /api/services 完成注册
+cd my-project && docker compose up -d --build
+
+# 确认注册成功
+docker compose logs my-project-register
+# → "my-project registered successfully."
+```
+
+访问：`https://my-project.yeanhua.asia`
+
+---
+
 ## 推送到github
 
 - /Users/yeanhua/workspace/playground/claude/github-assistant/README.md
@@ -371,38 +402,11 @@ make build-frontend
 > 本地开发使用真实域名（`*.yeanhua.asia`）+ 443 端口，Let's Encrypt HTTP-01 challenge 依赖外部回调，
 > 必须用 acme.sh DNS-01 challenge 提前签好证书再挂入容器。
 
-这一步分 **签发** 和 **安装** 两个阶段：
-
-| | `--issue`（签发） | `--install-cert`（安装） |
-|---|---|---|
-| 做什么 | 与 Let's Encrypt 交互，DNS 验证，获取证书 | 从 acme.sh 工作目录复制证书到你指定的路径 |
-| 产物位置 | `~/.acme.sh/` 内部（混着配置和元数据，不适合直接引用） | `~/certs/yeanhua.asia/`（干净的 pem 文件，供 Caddy 挂载） |
-| 需要网络 | 需要（阿里云 DNS API + CA） | 不需要 |
-| 重复执行 | 幂等——证书已存在且未到期时自动跳过，不会重新签发（加 `--force` 才会） | 幂等——重复执行只是覆盖同名文件 |
-
-分离的好处：acme.sh 内部目录结构可以随版本变化，而 Caddy 始终从固定路径 `~/certs/yeanhua.asia/` 读证书，互不耦合。`--cron` 续签后也会自动重新 install 到同一位置。
-
 ```bash
-# 1. 签发：向 Let's Encrypt 申请通配符证书（DNS challenge，不需要开放任何端口）
-#    产物存入 ~/.acme.sh/ 内部目录
-docker run --rm -it \
-  -v "$HOME/.acme.sh:/acme.sh" \
-  -e Ali_Key="${Ali_Key}" \
-  -e Ali_Secret="${Ali_Secret}" \
-  neilpang/acme.sh \
-  --issue -d "*.yeanhua.asia" -d yeanhua.asia \
-  --dns dns_ali --server letsencrypt
-
-# 2. 安装：将证书复制到统一目录（按域名区分），供 Caddy 挂载
-mkdir -p ~/certs/yeanhua.asia
-docker run --rm -it \
-  -v "$HOME/.acme.sh:/acme.sh" \
-  -v "$HOME/certs/yeanhua.asia:/certs" \
-  neilpang/acme.sh \
-  --install-cert -d "*.yeanhua.asia" \
-  --fullchain-file /certs/fullchain.pem \
-  --key-file       /certs/key.pem
+Ali_Key=<your-key> Ali_Secret=<your-secret> make cert-issue
 ```
+
+内部分两步执行（`--issue` 签发 + `--install-cert` 安装到 `~/certs/yeanhua.asia/`），幂等，重复执行安全。续签用 `make cert-renew`。
 
 证书从签发到被 Caddy 使用的完整链路：
 ```
