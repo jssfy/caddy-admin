@@ -9,6 +9,50 @@ Caddy 多项目管理平台：只读仪表盘 + **动态服务注册中心**。
 
 ---
 
+## 快速上手
+
+### ECS 生产部署
+
+```bash
+# 1. 阿里云控制台添加 DNS A 记录（或泛域名 *.yeanhua.asia → ECS IP）
+#    也可用 CLI：make add-dns RR=caddy-admin
+
+# 2. 构建前端
+make build-frontend
+
+# 3. 签发 TLS 证书（首次，仅需一次）
+#    使用 acme.sh DNS-01 challenge，详见下方"步骤 2"
+
+# 4. 启动
+make up
+```
+
+访问：`https://caddy-admin.yeanhua.asia`
+
+---
+
+### 本地开发测试
+
+```bash
+# 1. 构建前端
+make build-frontend
+
+# 2. 签发 TLS 证书（首次，仅需一次）
+#    使用 acme.sh DNS-01 challenge，详见下方"步骤 2"
+
+# 3. 启动所有容器
+make up
+
+# 4. 添加本地 DNS 映射（需要 sudo）
+make hosts-add
+# 写入 /etc/hosts：caddy-admin / site-a / site-b / project-c / project-d-stripe → 127.0.0.1
+# 撤销：make hosts-remove
+```
+
+访问：`https://caddy-admin.yeanhua.asia`
+
+---
+
 ## 推送到github
 
 - /Users/yeanhua/workspace/playground/claude/github-assistant/README.md
@@ -102,19 +146,19 @@ Browser → Caddy(:443, TLS) → project-c-frontend(nginx:80) → /api/* → pro
 
 ### caddy（唯一对外暴露端口的容器）
 
-对外端口：`8443`→443 / `8180`→80 / `2019`（Admin API，调试用）
+对外端口：`443` / `80` / `2019`（Admin API，调试用）
 
 Caddy 本身不只是反代，**也直接提供前端页面**——静态文件服务是 Caddy 的内建功能，不需要额外的 Nginx 或 Node 容器。
 
 | 请求 | Caddy 处理方式 | 流量终点 |
 |------|--------------|---------|
-| `https://caddy-admin.localhost:8443/` | 读 bind mount `./frontend/dist/index.html` | **Caddy 本身**（无转发） |
-| `https://caddy-admin.localhost:8443/sites` | 读 `./frontend/dist/index.html`（SPA fallback）| **Caddy 本身** |
-| `https://caddy-admin.localhost:8443/api/*` | reverse_proxy | `caddy-admin-api:8090` |
-| `https://site-a.localhost:8443/` | 读 bind mount `./mock-sites/static/site-a/` | **Caddy 本身** |
-| `https://api.site-a.localhost:8443/*` | reverse_proxy | `site-a-api:8081` |
-| `https://site-b.localhost:8443/` | 读 bind mount `./mock-sites/static/site-b/` | **Caddy 本身** |
-| `https://api.site-b.localhost:8443/*` | reverse_proxy | `site-b-api:8082` |
+| `https://caddy-admin.yeanhua.asia/` | 读 bind mount `./frontend/dist/index.html` | **Caddy 本身**（无转发） |
+| `https://caddy-admin.yeanhua.asia/sites` | 读 `./frontend/dist/index.html`（SPA fallback）| **Caddy 本身** |
+| `https://caddy-admin.yeanhua.asia/api/*` | reverse_proxy | `caddy-admin-api:8090` |
+| `https://site-a.yeanhua.asia/` | 读 bind mount `./mock-sites/static/site-a/` | **Caddy 本身** |
+| `https://api.site-a.yeanhua.asia/*` | reverse_proxy | `site-a-api:8081` |
+| `https://site-b.yeanhua.asia/` | 读 bind mount `./mock-sites/static/site-b/` | **Caddy 本身** |
+| `https://api.site-b.yeanhua.asia/*` | reverse_proxy | `site-b-api:8082` |
 | `http://localhost:2019/config/` | Admin API（Caddy 内建）| **Caddy 本身** |
 
 ### caddy-admin-api（Go 后端 + 服务注册中心）
@@ -194,7 +238,7 @@ GET http://caddy:2019/config/   → 返回 Caddy 当前加载的完整 JSON 配�
 `make build-frontend` 将 React 编译成静态 HTML/JS/CSS 输出到 `./frontend/dist/`，这个目录以 bind mount 方式挂入 caddy 容器。Caddy 的 `file_server` 指令直接读取并返回这些文件——和 Nginx 托管静态文件是同一个原理，只是 Caddy 内建了这个功能，不需要再起一个 Nginx 容器。
 
 ```
-浏览器请求 https://caddy-admin.localhost:8443/
+浏览器请求 https://caddy-admin.yeanhua.asia/
         ↓
   Caddy file_server 读 /var/www/caddy-admin/dist/index.html
   （容器内路径，对应 host 的 ./frontend/dist/index.html）
@@ -324,7 +368,7 @@ make build-frontend
 
 **步骤 2：签发 TLS 证书（首次，仅需一次）**
 
-> Caddy 运行在非标准端口 8443，Let's Encrypt HTTP-01 challenge 无法回调，
+> 本地开发使用真实域名（`*.yeanhua.asia`）+ 443 端口，Let's Encrypt HTTP-01 challenge 依赖外部回调，
 > 必须用 acme.sh DNS-01 challenge 提前签好证书再挂入容器。
 
 这一步分 **签发** 和 **安装** 两个阶段：
@@ -404,12 +448,12 @@ make up
 2. **启动 site-a-api / site-b-api**：两个 mock 后端，分别监听容器内 8081 / 8082 端口，模拟真实项目的 API 服务
 3. **启动 caddy-admin-api**：Go 后端，监听 8090，启动后等待被 Caddy 反代——此时还不能从外部直接访问（没有域名解析）
 4. **启动 Caddy**：读取 `caddy/Caddyfile`，读取挂载的 TLS 证书（步骤 2 签发），
-   开始监听 8180（→容器内 80）和 8443（→容器内 443），
+   开始监听 443 和 80，
    按 Host 头将请求路由到对应的静态目录或上游容器
 
 完成后容器网络拓扑：
 ```
-Host 8443 → caddy容器:443
+Host 443 → caddy容器:443
                ├── caddy-admin.yeanhua.asia  → /api/* → caddy-admin-api:8090 | 其余 → static dist/
                ├── site-a.yeanhua.asia       → /api/* → site-a-api:8081      | 其余 → static site-a/
                └── site-b.yeanhua.asia       → /api/* → site-b-api:8082      | 其余 → static site-b/
@@ -535,10 +579,9 @@ done
 
 **步骤 5：访问面板**
 ```bash
-open https://caddy-admin.yeanhua.asia:8443   # 本地（非标端口）
-open https://caddy-admin.yeanhua.asia        # ECS 生产（标准 443）
+open https://caddy-admin.yeanhua.asia
 # 或直接测试 API：
-curl -s https://caddy-admin.yeanhua.asia:8443/api/sites
+curl -s https://caddy-admin.yeanhua.asia/api/sites
 ```
 
 ### 验证接口（不走浏览器，直接打 API）
